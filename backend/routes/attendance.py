@@ -14,8 +14,7 @@ ALLOWED_RADIUS_METERS = 100
 
 
 def get_db():
-    return current_app.extensions["sqlalchemy"].db
-
+    return current_app.extensions["sqlalchemy"]
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     """
