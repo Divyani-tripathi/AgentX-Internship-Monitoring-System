@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from routes.student import student_bp
 from routes.mentor import mentor_bp
 from routes.college import college_bp
-from routes.attendance import attendance_bp
+
 
 load_dotenv()
 
@@ -67,9 +67,8 @@ def home():
 app.register_blueprint(student_bp)
 app.register_blueprint(mentor_bp)
 app.register_blueprint(college_bp)
-app.register_blueprint(attendance_bp)
 
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)

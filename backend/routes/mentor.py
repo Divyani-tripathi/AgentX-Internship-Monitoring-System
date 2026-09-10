@@ -1,4 +1,5 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
+from sqlalchemy import text
 
 mentor_bp = Blueprint("mentor", __name__)
 
@@ -44,23 +45,11 @@ def mentor_interns():
     return jsonify(interns)
 
 
-#Mentor Work-Log Review API
-
-mentor_work_logs = [
-    {
-        "id": 1,
-        "student_id": 1,
-        "student_name": "Rahul",
-        "task": "Create Student Dashboard",
-        "hours": 6,
-        "description": "Developed the student dashboard API",
-        "approval_status": "Pending"
-    }
-]
-
+# Mentor Work-Log Review API
 
 @mentor_bp.route("/mentor/work-log/<int:log_id>/review", methods=["POST"])
 def review_work_log(log_id):
+
     data = request.get_json()
 
     if not data:
@@ -76,16 +65,53 @@ def review_work_log(log_id):
             "error": "Status must be Approved or Rejected"
         }), 400
 
-    for log in mentor_work_logs:
-        if log["id"] == log_id:
-            log["approval_status"] = status
-            log["feedback"] = feedback
+    db = current_app.extensions["sqlalchemy"]
 
-            return jsonify({
-                "message": f"Work log {status.lower()} successfully",
-                "work_log": log
-            }), 200
+    query = text("""
+        UPDATE work_logs
+        SET
+            approval_status = :status,
+            feedback = :feedback
+        WHERE work_log_id = :log_id
+        RETURNING
+            work_log_id,
+            student_id,
+            task_id,
+            work_date,
+            hours,
+            description,
+            approval_status,
+            feedback
+    """)
+
+    result = db.session.execute(
+        query,
+        {
+            "status": status,
+            "feedback": feedback,
+            "log_id": log_id
+        }
+    ).fetchone()
+
+    if not result:
+        return jsonify({
+            "error": "Work log not found"
+        }), 404
+
+    db.session.commit()
+
+    work_log = {
+        "id": result.work_log_id,
+        "student_id": result.student_id,
+        "task_id": result.task_id,
+        "date": str(result.work_date),
+        "hours": float(result.hours),
+        "description": result.description,
+        "approval_status": result.approval_status,
+        "feedback": result.feedback
+    }
 
     return jsonify({
-        "error": "Work log not found"
-    }), 404
+        "message": f"Work log {status.lower()} successfully",
+        "work_log": work_log
+    }), 200
