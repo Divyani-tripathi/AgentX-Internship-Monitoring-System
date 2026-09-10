@@ -196,10 +196,6 @@ def student_tasks():
 # STUDENT WORK LOG
 # =========================
 
-# Temporary storage
-work_logs = []
-
-
 @student_bp.route("/student/work-log", methods=["POST"])
 def create_work_log():
 
@@ -224,17 +220,59 @@ def create_work_log():
                 "error": f"{field} is required"
             }), 400
 
-    work_log = {
-        "id": len(work_logs) + 1,
-        "student_id": data["student_id"],
-        "task_id": data["task_id"],
-        "date": data["date"],
-        "hours": data["hours"],
-        "description": data["description"],
-        "approval_status": "Pending"
-    }
+    db = current_app.extensions["sqlalchemy"]
 
-    work_logs.append(work_log)
+    query = text("""
+        INSERT INTO work_logs
+        (
+            student_id,
+            task_id,
+            work_date,
+            hours,
+            description,
+            approval_status
+        )
+        VALUES
+        (
+            :student_id,
+            :task_id,
+            :work_date,
+            :hours,
+            :description,
+            'Pending'
+        )
+        RETURNING
+            work_log_id,
+            student_id,
+            task_id,
+            work_date,
+            hours,
+            description,
+            approval_status
+    """)
+
+    result = db.session.execute(
+        query,
+        {
+            "student_id": data["student_id"],
+            "task_id": data["task_id"],
+            "work_date": data["date"],
+            "hours": data["hours"],
+            "description": data["description"]
+        }
+    ).fetchone()
+
+    db.session.commit()
+
+    work_log = {
+        "id": result.work_log_id,
+        "student_id": result.student_id,
+        "task_id": result.task_id,
+        "date": str(result.work_date),
+        "hours": float(result.hours),
+        "description": result.description,
+        "approval_status": result.approval_status
+    }
 
     return jsonify({
         "message": "Work log submitted successfully",
@@ -245,7 +283,50 @@ def create_work_log():
 @student_bp.route("/student/work-logs", methods=["GET"])
 def get_work_logs():
 
+    student_id = request.args.get(
+        "student_id",
+        1,
+        type=int
+    )
+
+    db = current_app.extensions["sqlalchemy"]
+
+    query = text("""
+        SELECT
+            work_log_id,
+            student_id,
+            task_id,
+            work_date,
+            hours,
+            description,
+            approval_status
+        FROM work_logs
+        WHERE student_id = :student_id
+        ORDER BY work_date DESC, work_log_id DESC
+    """)
+
+    result = db.session.execute(
+        query,
+        {
+            "student_id": student_id
+        }
+    ).fetchall()
+
+    work_logs = []
+
+    for row in result:
+        work_logs.append({
+            "id": row.work_log_id,
+            "student_id": row.student_id,
+            "task_id": row.task_id,
+            "date": str(row.work_date),
+            "hours": float(row.hours),
+            "description": row.description,
+            "approval_status": row.approval_status
+        })
+
     return jsonify({
+        "student_id": student_id,
         "work_logs": work_logs
     })
 
