@@ -5,51 +5,43 @@ import math
 import secrets
 import qrcode
 
+
+# ============================================================
+# ATTENDANCE BLUEPRINT
+# ============================================================
+
 attendance_bp = Blueprint("attendance", __name__)
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
 
-# Each attendance QR session is valid for 30 minutes
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 SESSION_DURATION_MINUTES = 30
 
-# TEMPORARY COMPANY LOCATION
-# Change these later to the actual internship/company location
+# Temporary company location
+# Change these later to the actual company location.
 COMPANY_LATITUDE = 21.1458
 COMPANY_LONGITUDE = 79.0882
 
-# Student must be within 150 meters of company location
-ALLOWED_RADIUS_METERS = 150
-
-# For local testing this is None.
-# After deployment, put your public HTTPS backend URL here.
-# Example:
-# PUBLIC_BASE_URL = "https://your-app.onrender.com"
-PUBLIC_BASE_URL = None
+# For testing/demo.
+# After testing, change this to 150.
+ALLOWED_RADIUS_METERS = 500000
 
 
-# =========================================================
-# TEMPORARY STORAGE
-# =========================================================
+# ============================================================
+# TEMPORARY MEMORY STORAGE
+# ============================================================
 
 active_session = None
 attendance_records = []
 
 
-# =========================================================
-# TIME
-# =========================================================
+# ============================================================
+# GPS DISTANCE CALCULATION
+# ============================================================
 
-def utc_now():
-    return datetime.now(timezone.utc)
-
-
-# =========================================================
-# GPS DISTANCE
-# =========================================================
-
-def haversine_meters(lat1, lon1, lat2, lon2):
+def calculate_distance(lat1, lon1, lat2, lon2):
 
     earth_radius = 6371000
 
@@ -61,220 +53,246 @@ def haversine_meters(lat1, lon1, lat2, lon2):
 
     a = (
         math.sin(delta_lat / 2) ** 2
-        + math.cos(lat1)
+        +
+        math.cos(lat1)
         * math.cos(lat2)
         * math.sin(delta_lon / 2) ** 2
     )
 
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    c = 2 * math.atan2(
+        math.sqrt(a),
+        math.sqrt(1 - a)
+    )
 
     return earth_radius * c
 
 
-# =========================================================
+# ============================================================
 # CHECK ACTIVE SESSION
-# =========================================================
+# ============================================================
 
-def session_is_active():
+def session_is_valid(session_id):
 
     global active_session
 
     if active_session is None:
         return False
 
-    if utc_now() >= active_session["expires_at"]:
+    if session_id != active_session["id"]:
+        return False
 
-        active_session = None
+    now = datetime.now(timezone.utc)
 
+    if now >= active_session["expires_at"]:
         return False
 
     return True
 
 
-# =========================================================
+# ============================================================
 # MENTOR ATTENDANCE PAGE
-# =========================================================
+# ============================================================
 
-@attendance_bp.route("/attendance/mentor", methods=["GET"])
-def mentor_page():
+@attendance_bp.route("/attendance/mentor")
+def mentor_attendance():
 
     return """
-<!DOCTYPE html>
+    <!DOCTYPE html>
 
-<html>
+    <html>
 
-<head>
+    <head>
 
-<meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1">
 
-<title>Mentor Attendance</title>
+        <title>Mentor Attendance</title>
 
-<style>
+    </head>
 
-body {
-    font-family: Arial;
-    text-align: center;
-    padding: 30px;
-}
+    <body style="
+        font-family:Arial;
+        text-align:center;
+        padding:30px;
+        background:#f5f5f5;
+    ">
 
-button {
-    padding: 12px 25px;
-    font-size: 18px;
-    cursor: pointer;
-}
+        <div style="
+            background:white;
+            max-width:600px;
+            margin:auto;
+            padding:30px;
+            border-radius:15px;
+        ">
 
-img {
-    width: 280px;
-    margin-top: 20px;
-}
+            <h1>🏢 AgentX</h1>
 
-#status {
-    margin: 20px;
-    font-weight: bold;
-}
+            <h2>Internship Attendance</h2>
 
-</style>
+            <p>
+                Start a new attendance session.
+            </p>
 
-</head>
+            <p>
+                QR will remain valid for
+                <b>30 minutes</b>.
+            </p>
 
-<body>
+            <br>
 
-<h1>Mentor Attendance</h1>
+            <a href="/attendance/start">
 
-<p>QR attendance session is valid for 30 minutes.</p>
+                <button style="
+                    padding:15px 30px;
+                    font-size:18px;
+                    border-radius:10px;
+                    cursor:pointer;
+                ">
 
-<button onclick="startAttendance()">
-Start Attendance
-</button>
+                    START ATTENDANCE
 
-<div id="status">
-No active attendance session
-</div>
+                </button>
 
-<img id="qr" style="display:none;">
+            </a>
 
-<script>
+            <br><br>
 
-async function startAttendance() {
+            <a href="/attendance/records">
+                View Attendance Records
+            </a>
 
-    const response = await fetch(
-        "/attendance/start",
-        {
-            method: "POST"
-        }
-    );
+        </div>
 
-    const data = await response.json();
+    </body>
 
-    if (!response.ok) {
-
-        document.getElementById("status").innerText =
-            data.error || "Unable to start attendance";
-
-        return;
-    }
-
-    document.getElementById("status").innerText =
-        "Attendance started. QR is valid for 30 minutes.";
-
-    const qr = document.getElementById("qr");
-
-    qr.src = "/attendance/qr?t=" + Date.now();
-
-    qr.style.display = "inline-block";
-}
-
-</script>
-
-</body>
-
-</html>
-"""
+    </html>
+    """
 
 
-# =========================================================
-# START ATTENDANCE SESSION
-# =========================================================
+# ============================================================
+# START NEW ATTENDANCE SESSION
+# ============================================================
 
-@attendance_bp.route("/attendance/start", methods=["GET", "POST"])
+@attendance_bp.route("/attendance/start")
 def start_attendance():
 
     global active_session
-    global attendance_records
 
-    now = utc_now()
+    session_id = secrets.token_urlsafe(20)
 
-    session_id = secrets.token_urlsafe(24)
+    started_at = datetime.now(timezone.utc)
 
-    expires_at = now + timedelta(
-        minutes=SESSION_DURATION_MINUTES
+    expires_at = (
+        started_at
+        + timedelta(minutes=SESSION_DURATION_MINUTES)
     )
 
     active_session = {
 
-        "session_id": session_id,
+        "id": session_id,
 
-        "started_at": now,
+        "started_at": started_at,
 
         "expires_at": expires_at
 
     }
 
-    # New session gets a new attendance list
-    attendance_records = []
+    return """
+    <!DOCTYPE html>
 
-    return jsonify({
+    <html>
 
-        "success": True,
+    <head>
 
-        "message": "Attendance session started",
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1">
 
-        "session_id": session_id,
+        <title>Attendance QR</title>
 
-        "duration_minutes": SESSION_DURATION_MINUTES,
+    </head>
 
-        "started_at": now.isoformat(),
+    <body style="
+        font-family:Arial;
+        text-align:center;
+        padding:20px;
+        background:#f5f5f5;
+    ">
 
-        "expires_at": expires_at.isoformat()
+        <div style="
+            background:white;
+            max-width:600px;
+            margin:auto;
+            padding:25px;
+            border-radius:15px;
+        ">
 
-    })
+            <h1>✅ Attendance Started</h1>
+
+            <h2>Scan this QR</h2>
+
+            <img
+                src="/attendance/qr"
+                width="320"
+                alt="Attendance QR"
+            >
+
+            <h3>⏱️ Valid for 30 minutes</h3>
+
+            <p>
+                Students should scan this QR using their phone.
+            </p>
+
+            <br>
+
+            <a href="/attendance/records">
+                View Attendance Records
+            </a>
+
+        </div>
+
+    </body>
+
+    </html>
+    """
 
 
-# =========================================================
+# ============================================================
 # GENERATE QR CODE
-# =========================================================
+# ============================================================
 
-@attendance_bp.route("/attendance/qr", methods=["GET"])
-def attendance_qr():
+@attendance_bp.route("/attendance/qr")
+def generate_qr():
 
-    if not session_is_active():
+    if active_session is None:
 
-        return jsonify({
+        return Response(
+            "No active attendance session.",
+            status=404
+        )
 
-            "success": False,
+    if not session_is_valid(active_session["id"]):
 
-            "error":
-            "No active attendance session. Open /attendance/mentor first."
+        return Response(
+            "QR EXPIRED. Please start a new attendance session.",
+            status=410
+        )
 
-        }), 400
+    # The QR uses the current HTTPS website address.
+    # This works when the backend is deployed on an HTTPS server.
 
-    session_id = active_session["session_id"]
-
-    if PUBLIC_BASE_URL:
-
-        base_url = PUBLIC_BASE_URL.rstrip("/")
-
-    else:
-
-        base_url = request.host_url.rstrip("/")
+    base_url = request.url_root.rstrip("/")
 
     scan_url = (
-        f"{base_url}/attendance/scan/{session_id}"
+        base_url
+        + "/attendance/scan/"
+        + active_session["id"]
     )
 
     qr = qrcode.QRCode(
 
         version=1,
+
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
 
         box_size=10,
 
@@ -286,312 +304,290 @@ def attendance_qr():
 
     qr.make(fit=True)
 
-    image = qr.make_image(
+    image = qr.make_image()
 
-        fill_color="black",
-
-        back_color="white"
-
-    )
-
-    output = io.BytesIO()
+    image_bytes = io.BytesIO()
 
     image.save(
-
-        output,
-
+        image_bytes,
         format="PNG"
-
     )
 
-    output.seek(0)
+    image_bytes.seek(0)
 
     return Response(
-
-        output.getvalue(),
-
+        image_bytes.getvalue(),
         mimetype="image/png"
-
     )
 
 
-# =========================================================
-# ATTENDANCE STATUS
-# =========================================================
+# ============================================================
+# STUDENT SCAN PAGE
+# ============================================================
 
-@attendance_bp.route("/attendance/status", methods=["GET"])
-def attendance_status():
+@attendance_bp.route("/attendance/scan/<session_id>")
+def scan_attendance(session_id):
 
-    if not session_is_active():
-
-        return jsonify({
-
-            "active": False,
-
-            "message":
-            "No active attendance session"
-
-        })
-
-    remaining_seconds = int(
-
-        (
-            active_session["expires_at"]
-            - utc_now()
-        ).total_seconds()
-
-    )
-
-    return jsonify({
-
-        "active": True,
-
-        "session_id":
-        active_session["session_id"],
-
-        "remaining_seconds":
-        max(0, remaining_seconds),
-
-        "expires_at":
-        active_session["expires_at"].isoformat()
-
-    })
-
-
-# =========================================================
-# STUDENT QR SCAN PAGE
-# =========================================================
-
-@attendance_bp.route(
-    "/attendance/scan/<session_id>",
-    methods=["GET"]
-)
-def scan_page(session_id):
-
-    if not session_is_active():
+    if not session_is_valid(session_id):
 
         return """
+        <!DOCTYPE html>
 
-        <h2>QR Expired</h2>
+        <html>
 
-        <p>
-        This attendance session has expired.
-        Please ask the mentor for a new QR.
-        </p>
+        <body style="
+            font-family:Arial;
+            text-align:center;
+            padding:40px;
+        ">
 
+            <h1>❌ QR EXPIRED</h1>
+
+            <p>
+                This attendance QR is no longer valid.
+            </p>
+
+            <p>
+                Please scan the new QR displayed by the mentor.
+            </p>
+
+        </body>
+
+        </html>
         """, 410
 
-    if session_id != active_session["session_id"]:
 
-        return """
+    return """
+    <!DOCTYPE html>
 
-        <h2>Invalid QR</h2>
+    <html>
 
-        <p>
-        This QR does not belong to the current
-        attendance session.
-        </p>
+    <head>
 
-        """, 400
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1">
 
-    return f"""
+        <title>Student Attendance</title>
 
-<!DOCTYPE html>
+        <style>
 
-<html>
+            body {
+                font-family: Arial;
+                background: #f5f5f5;
+                text-align: center;
+                padding: 20px;
+            }
 
-<head>
+            .box {
+                background: white;
+                max-width: 500px;
+                margin: auto;
+                padding: 25px;
+                border-radius: 15px;
+            }
 
-<meta name="viewport"
-content="width=device-width, initial-scale=1">
+            input {
+                width: 90%;
+                max-width: 350px;
+                padding: 14px;
+                font-size: 18px;
+                border: 1px solid #aaa;
+                border-radius: 8px;
+            }
 
-<title>Mark Attendance</title>
+            button {
+                padding: 15px 25px;
+                font-size: 18px;
+                border-radius: 10px;
+                cursor: pointer;
+            }
 
-<style>
+            #result {
+                margin-top: 20px;
+                font-size: 17px;
+            }
 
-body {{
+        </style>
 
-    font-family: Arial;
+    </head>
 
-    text-align: center;
 
-    padding: 25px;
+    <body>
 
-}}
+        <div class="box">
 
-input {{
+            <h1>🎓 Student Attendance</h1>
 
-    padding: 12px;
+            <h2>QR Verified ✅</h2>
 
-    font-size: 17px;
+            <p>
+                Enter your Student ID
+            </p>
 
-    width: 90%;
+            <input
+                id="student_id"
+                type="text"
+                placeholder="Enter Student ID"
+            >
 
-    max-width: 320px;
+            <br><br>
 
-}}
+            <button onclick="markAttendance()">
 
-button {{
+                📍 MARK ATTENDANCE
 
-    padding: 12px 22px;
+            </button>
 
-    font-size: 17px;
+            <div id="result"></div>
 
-    margin-top: 15px;
+        </div>
 
-}}
 
-#result {{
+        <script>
 
-    margin-top: 20px;
+        function markAttendance() {
 
-    font-weight: bold;
+            var studentId =
+                document.getElementById("student_id")
+                .value
+                .trim();
 
-}}
 
-</style>
+            if (!studentId) {
 
-</head>
+                document.getElementById("result")
+                    .innerHTML =
+                    "❌ Please enter Student ID.";
 
-<body>
+                return;
 
-<h2>Internship Attendance</h2>
+            }
 
-<p>
-Enter your Student ID and allow location access.
-</p>
 
-<input
-    id="student_id"
-    placeholder="Enter Student ID"
->
+            document.getElementById("result")
+                .innerHTML =
+                "📍 Requesting GPS location...";
 
-<br>
 
-<button onclick="markAttendance()">
+            if (!navigator.geolocation) {
 
-Mark Attendance
+                document.getElementById("result")
+                    .innerHTML =
+                    "❌ GPS is not supported by this browser.";
 
-</button>
+                return;
 
-<div id="result"></div>
+            }
 
-<script>
 
-async function markAttendance() {{
+            navigator.geolocation.getCurrentPosition(
 
-    const studentId =
-        document
-        .getElementById("student_id")
-        .value
-        .trim();
+                function(position) {
 
-    const result =
-        document
-        .getElementById("result");
+                    var latitude =
+                        position.coords.latitude;
 
-    if (!studentId) {{
+                    var longitude =
+                        position.coords.longitude;
 
-        result.innerText =
-            "Please enter Student ID.";
 
-        return;
+                    document.getElementById("result")
+                        .innerHTML =
+                        "📍 GPS received. Marking attendance...";
 
-    }}
 
-    if (!navigator.geolocation) {{
+                    fetch(
+                        "/attendance/mark",
+                        {
 
-        result.innerText =
-            "GPS is not supported on this device.";
+                            method: "POST",
 
-        return;
+                            headers: {
+                                "Content-Type":
+                                "application/json"
+                            },
 
-    }}
+                            body: JSON.stringify({
 
-    result.innerText =
-        "Getting your location...";
+                                student_id:
+                                studentId,
 
-    navigator.geolocation.getCurrentPosition(
+                                session_id:
+                                "__SESSION_ID__",
 
-        async (position) => {{
+                                latitude:
+                                latitude,
 
-            const response =
-                await fetch(
+                                longitude:
+                                longitude
 
-                    "/attendance/mark",
+                            })
 
-                    {{
+                        }
+                    )
 
-                        method: "POST",
+                    .then(function(response) {
 
-                        headers: {{
+                        return response.json();
 
-                            "Content-Type":
-                            "application/json"
+                    })
 
-                        }},
+                    .then(function(data) {
 
-                        body: JSON.stringify({{
+                        document.getElementById("result")
+                            .innerHTML =
+                            data.message;
 
-                            session_id:
-                            "{session_id}",
+                    })
 
-                            student_id:
-                            studentId,
+                    .catch(function(error) {
 
-                            latitude:
-                            position.coords.latitude,
+                        document.getElementById("result")
+                            .innerHTML =
+                            "❌ Server connection failed. Please try again.";
 
-                            longitude:
-                            position.coords.longitude
+                    });
 
-                        }})
+                },
 
-                    }}
 
-                );
+                function(error) {
 
-            const data =
-                await response.json();
+                    document.getElementById("result")
+                        .innerHTML =
+                        "❌ Please allow Location/GPS permission and try again.";
 
-            result.innerText =
-                data.message ||
-                data.error ||
-                "Attendance response received.";
+                },
 
-        }},
 
-        () => {{
+                {
 
-            result.innerText =
-                "Location permission is required.";
+                    enableHighAccuracy: true,
 
-        }},
+                    timeout: 15000,
 
-        {{
+                    maximumAge: 0
 
-            enableHighAccuracy: true,
+                }
 
-            timeout: 10000
+            );
 
-        }}
+        }
 
-    );
+        </script>
 
-}}
+    </body>
 
-</script>
+    </html>
+    """.replace(
+        "__SESSION_ID__",
+        session_id
+    )
 
-</body>
 
-</html>
-
-"""
-
-
-# =========================================================
+# ============================================================
 # MARK ATTENDANCE
-# =========================================================
+# ============================================================
 
 @attendance_bp.route(
     "/attendance/mark",
@@ -599,24 +595,53 @@ async function markAttendance() {{
 )
 def mark_attendance():
 
-    if not session_is_active():
+    if active_session is None:
 
         return jsonify({
 
             "success": False,
 
-            "error":
-            "Attendance session has expired."
+            "message":
+            "❌ No active attendance session."
+
+        }), 400
+
+
+    now = datetime.now(timezone.utc)
+
+
+    if now >= active_session["expires_at"]:
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            "❌ QR expired. Please scan the new QR."
 
         }), 410
 
+
     data = request.get_json(
         silent=True
-    ) or {}
+    )
 
-    student_id = str(
-        data.get("student_id", "")
-    ).strip()
+
+    if not data:
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            "❌ Invalid request."
+
+        }), 400
+
+
+    student_id = data.get(
+        "student_id"
+    )
 
     session_id = data.get(
         "session_id"
@@ -630,27 +655,54 @@ def mark_attendance():
         "longitude"
     )
 
+
+    # --------------------------------------------------------
+    # STUDENT ID
+    # --------------------------------------------------------
+
     if not student_id:
 
         return jsonify({
 
             "success": False,
 
-            "error":
-            "Student ID is required."
+            "message":
+            "❌ Student ID is required."
 
         }), 400
 
-    if session_id != active_session["session_id"]:
+
+    # --------------------------------------------------------
+    # SESSION
+    # --------------------------------------------------------
+
+    if session_id != active_session["id"]:
 
         return jsonify({
 
             "success": False,
 
-            "error":
-            "Invalid attendance session."
+            "message":
+            "❌ Invalid or expired QR."
 
         }), 400
+
+
+    # --------------------------------------------------------
+    # GPS
+    # --------------------------------------------------------
+
+    if latitude is None or longitude is None:
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            "❌ GPS location is required."
+
+        }), 400
+
 
     try:
 
@@ -658,44 +710,23 @@ def mark_attendance():
 
         longitude = float(longitude)
 
-    except (
-        TypeError,
-        ValueError
-    ):
+    except ValueError:
 
         return jsonify({
 
             "success": False,
 
-            "error":
-            "Valid GPS coordinates are required."
+            "message":
+            "❌ Invalid GPS coordinates."
 
         }), 400
 
-    # Prevent duplicate attendance
-    for record in attendance_records:
 
-        if (
-            record["student_id"]
-            == student_id
+    # --------------------------------------------------------
+    # DISTANCE
+    # --------------------------------------------------------
 
-            and
-
-            record["session_id"]
-            == session_id
-        ):
-
-            return jsonify({
-
-                "success": False,
-
-                "error":
-                "Attendance already marked for this session."
-
-            }), 409
-
-    # Calculate distance from company
-    distance = haversine_meters(
+    distance = calculate_distance(
 
         latitude,
 
@@ -707,22 +738,62 @@ def mark_attendance():
 
     )
 
-    # GPS validation
+
     if distance > ALLOWED_RADIUS_METERS:
 
         return jsonify({
 
             "success": False,
 
-            "error":
-            "You are outside the allowed attendance location.",
-
-            "distance_meters":
-            round(distance, 2)
+            "message":
+            "❌ You are outside the allowed company location."
 
         }), 403
 
-    # SERVER-GENERATED TIMESTAMP
+
+    # --------------------------------------------------------
+    # DUPLICATE CHECK
+    # --------------------------------------------------------
+
+    for record in attendance_records:
+
+        if (
+
+            record["student_id"]
+            == student_id
+
+            and
+
+            record["session_id"]
+            == session_id
+
+        ):
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "⚠️ Attendance already marked for this session."
+
+            }), 409
+
+
+    # --------------------------------------------------------
+    # SERVER TIMESTAMP
+    # --------------------------------------------------------
+
+    timestamp = datetime.now(
+        timezone.utc
+    ).strftime(
+        "%Y-%m-%d %H:%M:%S UTC"
+    )
+
+
+    # --------------------------------------------------------
+    # SAVE RECORD
+    # --------------------------------------------------------
+
     record = {
 
         "student_id":
@@ -731,12 +802,6 @@ def mark_attendance():
         "session_id":
         session_id,
 
-        "status":
-        "PRESENT",
-
-        "timestamp":
-        utc_now().isoformat(),
-
         "latitude":
         latitude,
 
@@ -744,43 +809,149 @@ def mark_attendance():
         longitude,
 
         "distance_meters":
-        round(distance, 2)
+        round(distance, 2),
+
+        "timestamp":
+        timestamp,
+
+        "status":
+        "PRESENT"
 
     }
+
 
     attendance_records.append(
         record
     )
+
 
     return jsonify({
 
         "success": True,
 
         "message":
-        "Attendance marked successfully.",
-
-        "attendance":
-        record
+        "✅ ATTENDANCE MARKED SUCCESSFULLY"
+        "<br><br>"
+        "Student ID: "
+        + str(student_id)
+        + "<br>"
+        "Status: PRESENT"
+        + "<br>"
+        "Server Time: "
+        + timestamp
+        + "<br>"
+        "GPS Location: "
+        + str(latitude)
+        + ", "
+        + str(longitude)
 
     })
 
 
-# =========================================================
-# VIEW ATTENDANCE RECORDS
-# =========================================================
+# ============================================================
+# ATTENDANCE RECORDS
+# ============================================================
 
 @attendance_bp.route(
-    "/attendance/records",
-    methods=["GET"]
+    "/attendance/records"
 )
-def attendance_records_view():
+def attendance_records_page():
 
-    return jsonify({
+    rows = ""
 
-        "count":
-        len(attendance_records),
+    for record in attendance_records:
 
-        "records":
-        attendance_records
+        rows += """
 
-    })
+        <tr>
+
+            <td>{}</td>
+
+            <td>{}</td>
+
+            <td>{}</td>
+
+            <td>{}</td>
+
+            <td>{}</td>
+
+            <td>{} m</td>
+
+        </tr>
+
+        """.format(
+
+            record["student_id"],
+
+            record["status"],
+
+            record["timestamp"],
+
+            record["latitude"],
+
+            record["longitude"],
+
+            record["distance_meters"]
+
+        )
+
+
+    return """
+
+    <!DOCTYPE html>
+
+    <html>
+
+    <head>
+
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1">
+
+        <title>Attendance Records</title>
+
+    </head>
+
+    <body style="
+        font-family:Arial;
+        padding:20px;
+    ">
+
+        <h1>📋 Attendance Records</h1>
+
+        <table
+            border="1"
+            cellpadding="10"
+            cellspacing="0"
+        >
+
+            <tr>
+
+                <th>Student ID</th>
+
+                <th>Status</th>
+
+                <th>Timestamp</th>
+
+                <th>Latitude</th>
+
+                <th>Longitude</th>
+
+                <th>Distance</th>
+
+            </tr>
+
+            {}
+
+        </table>
+
+        <br>
+
+        <a href="/attendance/mentor">
+            Back to Mentor Page
+        </a>
+
+    </body>
+
+    </html>
+
+    """.format(rows)
