@@ -1,98 +1,185 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, current_app
+from sqlalchemy import text
 
 college_bp = Blueprint("college", __name__)
 
-# college dashboard
-
-@college_bp.route("/college/dashboard", methods=["GET"])
-def college_dashboard():
-
-    dashboard = {
-        "total_students": 50,
-        "active_internships": 42,
-        "average_attendance": 78,
-        "average_performance": 75,
-        "at_risk_students": 8
-    }
-
-    return jsonify(dashboard)
-
-# College Students
-
-@college_bp.route("/college/students", methods=["GET"])
-def college_students():
-
-    students = [
-        {
-            "student_id": 1,
-            "name": "Rahul",
-            "department": "CSE",
-            "company": "Tech Solutions",
-            "attendance": 85,
-            "performance": 82,
-            "risk": "Low"
-        },
-        {
-            "student_id": 2,
-            "name": "Aditi",
-            "department": "CSE",
-            "company": "Tech Solutions",
-            "attendance": 68,
-            "performance": 65,
-            "risk": "Medium"
-        },
-        {
-            "student_id": 3,
-            "name": "Priya",
-            "department": "CSE",
-            "company": "Innovate Labs",
-            "attendance": 48,
-            "performance": 48,
-            "risk": "High"
-        }
-    ]
-
-    return jsonify(students)
 
 # College Performance API
-
 @college_bp.route("/college/performance", methods=["GET"])
 def college_performance():
 
-    performance = {
-        "average_attendance": 78,
-        "average_punctuality": 81,
-        "average_task_completion": 74,
-        "average_mentor_rating": 80,
-        "average_overall_score": 75
-    }
+    db = current_app.extensions["sqlalchemy"]
 
-    return jsonify(performance)
+    query = text("""
+        SELECT
+            s.student_id,
+            s.student_name,
+            i.company_name,
+            ip.tasks_completed,
+            ip.total_tasks,
+            ip.progress_percentage,
 
-# At-Risk Students API
+            COUNT(a.attendance_id) AS total_days,
+
+            COUNT(
+                CASE
+                    WHEN LOWER(a.status) = 'present'
+                    THEN 1
+                END
+            ) AS present_days
+
+        FROM students s
+
+        LEFT JOIN internships i
+            ON s.student_id = i.student_id
+
+        LEFT JOIN internship_progress ip
+            ON s.student_id = ip.student_id
+
+        LEFT JOIN attendance a
+            ON s.student_id = a.student_id
+
+        GROUP BY
+            s.student_id,
+            s.student_name,
+            i.company_name,
+            ip.tasks_completed,
+            ip.total_tasks,
+            ip.progress_percentage
+
+        ORDER BY s.student_id
+    """)
+
+    result = db.session.execute(query).fetchall()
+
+    students = []
+
+    for row in result:
+
+        tasks_completed = row.tasks_completed or 0
+        total_tasks = row.total_tasks or 0
+
+        task_completion = (
+            round((tasks_completed / total_tasks) * 100)
+            if total_tasks > 0 else 0
+        )
+
+        total_days = row.total_days or 0
+        present_days = row.present_days or 0
+
+        attendance = (
+            round((present_days / total_days) * 100)
+            if total_days > 0 else 0
+        )
+
+        performance = float(row.progress_percentage or 0)
+
+        students.append({
+            "student_id": row.student_id,
+            "name": row.student_name,
+            "company": row.company_name,
+            "attendance": attendance,
+            "task_completion": task_completion,
+            "performance": performance
+        })
+
+    return jsonify({
+        "total_students": len(students),
+        "students": students
+    })
+
+
+# College At-Risk Students API
 
 @college_bp.route("/college/at-risk", methods=["GET"])
 def college_at_risk():
 
-    at_risk_students = [
-        {
-            "student_id": 3,
-            "name": "Priya",
-            "attendance": 48,
-            "punctuality": 55,
-            "performance": 48,
-            "risk": "High",
-            "reason": "Low attendance and poor task completion"
-        },
-        {
-            "student_id": 2,
-            "name": "Aditi",
-            "attendance": 68,
-            "punctuality": 70,
-            "performance": 65,
-            "risk": "Medium",
-            "reason": "Below average attendance and performance"
-        }
-    ]
+    db = current_app.extensions["sqlalchemy"]
 
-    return jsonify(at_risk_students)
+    query = text("""
+        SELECT
+            s.student_id,
+            s.student_name,
+            i.company_name,
+            ip.tasks_completed,
+            ip.total_tasks,
+            ip.progress_percentage,
+
+            COUNT(a.attendance_id) AS total_days,
+
+            COUNT(
+                CASE
+                    WHEN LOWER(a.status) = 'present'
+                    THEN 1
+                END
+            ) AS present_days
+
+        FROM students s
+
+        LEFT JOIN internships i
+            ON s.student_id = i.student_id
+
+        LEFT JOIN internship_progress ip
+            ON s.student_id = ip.student_id
+
+        LEFT JOIN attendance a
+            ON s.student_id = a.student_id
+
+        GROUP BY
+            s.student_id,
+            s.student_name,
+            i.company_name,
+            ip.tasks_completed,
+            ip.total_tasks,
+            ip.progress_percentage
+
+        ORDER BY ip.progress_percentage ASC
+    """)
+
+    result = db.session.execute(query).fetchall()
+
+    at_risk_students = []
+
+    for row in result:
+
+        tasks_completed = row.tasks_completed or 0
+        total_tasks = row.total_tasks or 0
+
+        task_completion = (
+            round((tasks_completed / total_tasks) * 100)
+            if total_tasks > 0 else 0
+        )
+
+        total_days = row.total_days or 0
+        present_days = row.present_days or 0
+
+        attendance = (
+            round((present_days / total_days) * 100)
+            if total_days > 0 else 0
+        )
+
+        performance = float(row.progress_percentage or 0)
+
+        if performance < 50:
+            risk = "High"
+        elif performance < 75:
+            risk = "Medium"
+        else:
+            risk = "Low"
+
+        if risk in ["High", "Medium"]:
+
+            at_risk_students.append({
+                "student_id": row.student_id,
+                "name": row.student_name,
+                "company": row.company_name,
+                "attendance": attendance,
+                "task_completion": task_completion,
+                "performance": performance,
+                "risk": risk
+            })
+
+    return jsonify({
+        "total_at_risk": len(at_risk_students),
+        "students": at_risk_students
+    })

@@ -292,18 +292,19 @@ def get_work_logs():
     db = current_app.extensions["sqlalchemy"]
 
     query = text("""
-        SELECT
-            work_log_id,
-            student_id,
-            task_id,
-            work_date,
-            hours,
-            description,
-            approval_status
-        FROM work_logs
-        WHERE student_id = :student_id
-        ORDER BY work_date DESC, work_log_id DESC
-    """)
+    SELECT
+        work_log_id,
+        student_id,
+        task_id,
+        work_date,
+        hours,
+        description,
+        approval_status,
+        feedback
+    FROM work_logs
+    WHERE student_id = :student_id
+    ORDER BY work_date DESC, work_log_id DESC
+""")
 
     result = db.session.execute(
         query,
@@ -316,14 +317,15 @@ def get_work_logs():
 
     for row in result:
         work_logs.append({
-            "id": row.work_log_id,
-            "student_id": row.student_id,
-            "task_id": row.task_id,
-            "date": str(row.work_date),
-            "hours": float(row.hours),
-            "description": row.description,
-            "approval_status": row.approval_status
-        })
+    "id": row.work_log_id,
+    "student_id": row.student_id,
+    "task_id": row.task_id,
+    "date": str(row.work_date),
+    "hours": float(row.hours),
+    "description": row.description,
+    "approval_status": row.approval_status,
+    "feedback": row.feedback
+})
 
     return jsonify({
         "student_id": student_id,
